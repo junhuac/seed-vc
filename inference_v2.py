@@ -24,7 +24,8 @@ def load_v2_models(args):
     """Load V2 models using the wrapper from app.py"""
     from hydra.utils import instantiate
     from omegaconf import DictConfig
-    cfg = DictConfig(yaml.safe_load(open("configs/v2/vc_wrapper.yaml", "r")))
+    from ._paths import resolve_path
+    cfg = DictConfig(yaml.safe_load(open(resolve_path("configs/v2/vc_wrapper.yaml"), "r")))
     vc_wrapper = instantiate(cfg)
     vc_wrapper.load_checkpoints(ar_checkpoint_path=args.ar_checkpoint_path,
                                 cfm_checkpoint_path=args.cfm_checkpoint_path)

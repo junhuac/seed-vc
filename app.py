@@ -22,7 +22,8 @@ vc_wrapper_v2 = None
 def load_v2_models(args):
     from hydra.utils import instantiate
     from omegaconf import DictConfig
-    cfg = DictConfig(yaml.safe_load(open("configs/v2/vc_wrapper.yaml", "r")))
+    from ._paths import resolve_path
+    cfg = DictConfig(yaml.safe_load(open(resolve_path("configs/v2/vc_wrapper.yaml"), "r")))
     vc_wrapper = instantiate(cfg)
     vc_wrapper.load_checkpoints()
     vc_wrapper.to(device)

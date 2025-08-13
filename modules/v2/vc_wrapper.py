@@ -151,7 +151,7 @@ class VoiceConversionWrapper(torch.nn.Module):
             (n_gram_seq[0, :n_gram], n_gram_seq[1:, -1][mask])
         )
         return reduced_token_seq, len(reduced_token_seq)
-        
+
     @staticmethod
     def crossfade(chunk1, chunk2, overlap):
         """Apply crossfade between two audio chunks."""
@@ -163,11 +163,11 @@ class VoiceConversionWrapper(torch.nn.Module):
             chunk2[:overlap] = chunk2[:overlap] * fade_in + chunk1[-overlap:] * fade_out
         return chunk2
 
-    def _stream_wave_chunks(self, vc_wave, processed_frames, vc_mel, overlap_wave_len, 
+    def _stream_wave_chunks(self, vc_wave, processed_frames, vc_mel, overlap_wave_len,
                            generated_wave_chunks, previous_chunk, is_last_chunk, stream_output):
         """
         Helper method to handle streaming wave chunks.
-        
+
         Args:
             vc_wave: The current wave chunk
             processed_frames: Number of frames processed so far
@@ -177,7 +177,7 @@ class VoiceConversionWrapper(torch.nn.Module):
             previous_chunk: Previous wave chunk for crossfading
             is_last_chunk: Whether this is the last chunk
             stream_output: Whether to stream the output
-            
+
         Returns:
             Tuple of (processed_frames, previous_chunk, should_break, mp3_bytes, full_audio)
             where should_break indicates if processing should stop
@@ -186,7 +186,7 @@ class VoiceConversionWrapper(torch.nn.Module):
         """
         mp3_bytes = None
         full_audio = None
-        
+
         if processed_frames == 0:
             if is_last_chunk:
                 output_wave = vc_wave[0].cpu().numpy()
@@ -245,7 +245,7 @@ class VoiceConversionWrapper(torch.nn.Module):
                     output_wave_int16.tobytes(), frame_rate=self.sr,
                     sample_width=output_wave_int16.dtype.itemsize, channels=1
                 ).export(format="mp3", bitrate=self.bitrate).read()
-                
+
         return processed_frames, previous_chunk, False, mp3_bytes, full_audio
 
     def load_checkpoints(
@@ -511,7 +511,7 @@ class VoiceConversionWrapper(torch.nn.Module):
     ):
         """
         Convert voice with streaming support for long audio files.
-        
+
         Args:
             source_audio_path: Path to source audio file
             target_audio_path: Path to target audio file
@@ -525,7 +525,7 @@ class VoiceConversionWrapper(torch.nn.Module):
             device: Device to use (default: cpu)
             dtype: Data type to use (default: float32)
             stream_output: Whether to stream the output (default: True)
-            
+
         Returns:
             If stream_output is True, yields (mp3_bytes, full_audio) tuples
             If stream_output is False, returns the full audio as a numpy array
@@ -533,10 +533,10 @@ class VoiceConversionWrapper(torch.nn.Module):
         # Load audio
         source_wave = librosa.load(source_audio_path, sr=self.sr)[0]
         target_wave = librosa.load(target_audio_path, sr=self.sr)[0]
-        
+
         # Limit target audio to 25 seconds
         target_wave = target_wave[:self.sr * (self.dit_max_context_len - 5)]
-        
+
         source_wave_tensor = torch.tensor(source_wave).unsqueeze(0).float().to(device)
         target_wave_tensor = torch.tensor(target_wave).unsqueeze(0).float().to(device)
 
@@ -551,19 +551,21 @@ class VoiceConversionWrapper(torch.nn.Module):
         target_mel = self.mel_fn(target_wave_tensor)
         source_mel_len = source_mel.size(2)
         target_mel_len = target_mel.size(2)
-        
+
         # Set up chunk processing parameters
         max_context_window = self.sr // self.hop_size * self.dit_max_context_len
         overlap_wave_len = self.overlap_frame_len * self.hop_size
-        
+
         with torch.autocast(device_type=device.type, dtype=dtype):
             # Compute content features
             source_content_indices = self._process_content_features(source_wave_16k_tensor, is_narrow=False)
             target_content_indices = self._process_content_features(target_wave_16k_tensor, is_narrow=False)
             # Compute style features
             target_style = self.compute_style(target_wave_16k_tensor)
-            prompt_condition, _, = self.cfm_length_regulator(target_content_indices,
-                                                             ylens=torch.LongTensor([target_mel_len]).to(device))
+            prompt_condition, _, = self.cfm_length_regulator(
+                target_content_indices,
+                ylens=torch.LongTensor([target_mel_len]).to(device),
+            )
 
         # prepare for streaming
         generated_wave_chunks = []
@@ -585,18 +587,26 @@ class VoiceConversionWrapper(torch.nn.Module):
                     chunk = src_narrow_reduced[i:i + max_chunk_size]
                     if anonymization_only:
                         chunk_ar_cond = self.ar_length_regulator(chunk[None])[0]
-                        chunk_ar_out = self.ar.generate(chunk_ar_cond, torch.zeros([1, 0]).long().to(device),
-                                                        compiled_decode_fn=self.compiled_decode_fn,
-                                                      top_p=top_p, temperature=temperature,
-                                                      repetition_penalty=repetition_penalty)
+                        chunk_ar_out = self.ar.generate(
+                            chunk_ar_cond,
+                            torch.zeros([1, 0]).long().to(device),
+                            compiled_decode_fn=self.compiled_decode_fn,
+                            top_p=top_p, temperature=temperature,
+                            repetition_penalty=repetition_penalty,
+                        )
                     else:
                         # For each chunk, we need to include tgt_narrow_reduced as context
                         chunk_ar_cond = self.ar_length_regulator(torch.cat([tgt_narrow_reduced, chunk], dim=0)[None])[0]
-                        chunk_ar_out = self.ar.generate(chunk_ar_cond, target_content_indices, compiled_decode_fn=self.compiled_decode_fn,
-                                                      top_p=top_p, temperature=temperature,
-                                                      repetition_penalty=repetition_penalty)
-                    chunkar_out_mel_len = torch.LongTensor([int(source_mel_len / source_content_indices.size(
-                        -1) * chunk_ar_out.size(-1) * length_adjust)]).to(device)
+                        chunk_ar_out = self.ar.generate(
+                            chunk_ar_cond,
+                            target_content_indices,
+                            compiled_decode_fn=self.compiled_decode_fn,
+                            top_p=top_p, temperature=temperature,
+                            repetition_penalty=repetition_penalty,
+                        )
+                    chunkar_out_mel_len = torch.LongTensor([
+                        int(source_mel_len / source_content_indices.size(-1) * chunk_ar_out.size(-1) * length_adjust)
+                    ]).to(device)
                     # Length regulation
                     chunk_cond, _ = self.cfm_length_regulator(chunk_ar_out, ylens=torch.LongTensor([chunkar_out_mel_len]).to(device))
                     cat_condition = torch.cat([prompt_condition, chunk_cond], dim=1)
@@ -657,8 +667,247 @@ class VoiceConversionWrapper(torch.nn.Module):
                     vc_wave, processed_frames, vc_mel, overlap_wave_len,
                     generated_wave_chunks, previous_chunk, is_last_chunk, stream_output
                 )
-                
+
                 if stream_output and mp3_bytes is not None:
                     yield mp3_bytes, full_audio
                 if should_break:
                     break
+
+        # If not streaming, return the concatenated audio
+        if not stream_output:
+            return self.sr, np.concatenate(generated_wave_chunks) if len(generated_wave_chunks) > 0 else np.array([], dtype=np.float32)
+
+
+    @torch.no_grad()
+    @torch.inference_mode()
+    def convert_voice_with_streaming_arrays(
+        self,
+        source_wave: np.ndarray,
+        target_wave: np.ndarray,
+        source_sr: int,
+        target_sr: int,
+        diffusion_steps: int = 30,
+        length_adjust: float = 1.0,
+        intelligebility_cfg_rate: float = 0.7,
+        similarity_cfg_rate: float = 0.7,
+        top_p: float = 0.9,
+        temperature: float = 1.0,
+        repetition_penalty: float = 1.0,
+        convert_style: bool = False,
+        anonymization_only: bool = False,
+        device: torch.device = torch.device("cuda"),
+        dtype: torch.dtype = torch.float16,
+        stream_output: bool = False,
+    ):
+        """
+        In-memory variant of convert_voice_with_streaming that accepts raw arrays and sample rates.
+        If stream_output is False, returns (sr, full_audio_np). If True, yields (mp3_bytes, full_audio_np) chunks.
+        """
+        # Normalize input arrays
+        source_wave = np.asarray(source_wave, dtype=np.float32).reshape(-1)
+        target_wave = np.asarray(target_wave, dtype=np.float32).reshape(-1)
+
+        # Resample to model SR if needed
+        if source_sr != self.sr:
+            source_wave = librosa.resample(source_wave, orig_sr=source_sr, target_sr=self.sr)
+        if target_sr != self.sr:
+            target_wave = librosa.resample(target_wave, orig_sr=target_sr, target_sr=self.sr)
+
+        # Limit target audio duration to protect context window
+        target_wave = target_wave[: self.sr * (self.dit_max_context_len - 5)]
+
+        # Torch tensors
+        source_wave_tensor = torch.tensor(source_wave).unsqueeze(0).float().to(device)
+        target_wave_tensor = torch.tensor(target_wave).unsqueeze(0).float().to(device)
+
+        # 16k content
+        source_wave_16k = librosa.resample(source_wave, orig_sr=self.sr, target_sr=16000)
+        target_wave_16k = librosa.resample(target_wave, orig_sr=self.sr, target_sr=16000)
+        source_wave_16k_tensor = torch.tensor(source_wave_16k).unsqueeze(0).to(device)
+        target_wave_16k_tensor = torch.tensor(target_wave_16k).unsqueeze(0).to(device)
+
+        # Mels
+        source_mel = self.mel_fn(source_wave_tensor)
+        target_mel = self.mel_fn(target_wave_tensor)
+        source_mel_len = source_mel.size(2)
+        target_mel_len = target_mel.size(2)
+
+        # Chunk params
+        max_context_window = self.sr // self.hop_size * self.dit_max_context_len
+        overlap_wave_len = self.overlap_frame_len * self.hop_size
+
+        with torch.autocast(device_type=device.type, dtype=dtype):
+            source_content_indices = self._process_content_features(source_wave_16k_tensor, is_narrow=False)
+            target_content_indices = self._process_content_features(target_wave_16k_tensor, is_narrow=False)
+            target_style = self.compute_style(target_wave_16k_tensor)
+            prompt_condition, _, = self.cfm_length_regulator(
+                target_content_indices, ylens=torch.LongTensor([target_mel_len]).to(device)
+            )
+
+        generated_wave_chunks = []
+        processed_frames = 0
+        previous_chunk = None
+
+        if convert_style:
+            with torch.autocast(device_type=device.type, dtype=dtype):
+                source_narrow_indices = self._process_content_features(source_wave_16k_tensor, is_narrow=True)
+                target_narrow_indices = self._process_content_features(target_wave_16k_tensor, is_narrow=True)
+            src_narrow_reduced, _ = self.duration_reduction_func(source_narrow_indices[0], 1)
+            tgt_narrow_reduced, tgt_narrow_len = self.duration_reduction_func(target_narrow_indices[0], 1)
+
+            max_chunk_size = self.ar_max_content_len - tgt_narrow_len
+            for i in range(0, len(src_narrow_reduced), max_chunk_size):
+                is_last_chunk = i + max_chunk_size >= len(src_narrow_reduced)
+                with torch.autocast(device_type=device.type, dtype=dtype):
+                    chunk = src_narrow_reduced[i : i + max_chunk_size]
+                    if anonymization_only:
+                        chunk_ar_cond = self.ar_length_regulator(chunk[None])[0]
+                        chunk_ar_out = self.ar.generate(
+                            chunk_ar_cond,
+                            torch.zeros([1, 0]).long().to(device),
+                            compiled_decode_fn=self.compiled_decode_fn,
+                            top_p=top_p,
+                            temperature=temperature,
+                            repetition_penalty=repetition_penalty,
+                        )
+                    else:
+                        chunk_ar_cond = self.ar_length_regulator(
+                            torch.cat([tgt_narrow_reduced, chunk], dim=0)[None]
+                        )[0]
+                        chunk_ar_out = self.ar.generate(
+                            chunk_ar_cond,
+                            target_content_indices,
+                            compiled_decode_fn=self.compiled_decode_fn,
+                            top_p=top_p,
+                            temperature=temperature,
+                            repetition_penalty=repetition_penalty,
+                        )
+                    chunkar_out_mel_len = torch.LongTensor([
+                        int(source_mel_len / source_content_indices.size(-1) * chunk_ar_out.size(-1) * length_adjust)
+                    ]).to(device)
+                    chunk_cond, _ = self.cfm_length_regulator(
+                        chunk_ar_out, ylens=torch.LongTensor([chunkar_out_mel_len]).to(device)
+                    )
+                    cat_condition = torch.cat([prompt_condition, chunk_cond], dim=1)
+                    original_len = cat_condition.size(1)
+                    if self.dit_compiled:
+                        cat_condition = torch.nn.functional.pad(
+                            cat_condition,
+                            (0, 0, 0, self.compile_len - cat_condition.size(1)),
+                            value=0,
+                        )
+                    vc_mel = self.cfm.inference(
+                        cat_condition,
+                        torch.LongTensor([original_len]).to(device),
+                        target_mel,
+                        target_style,
+                        diffusion_steps,
+                        inference_cfg_rate=[intelligebility_cfg_rate, similarity_cfg_rate],
+                        random_voice=anonymization_only,
+                    )
+                    vc_mel = vc_mel[:, :, target_mel_len:original_len]
+                vc_wave = self.vocoder(vc_mel).squeeze()[None]
+                processed_frames, previous_chunk, should_break, mp3_bytes, full_audio = self._stream_wave_chunks(
+                    vc_wave,
+                    processed_frames,
+                    vc_mel,
+                    overlap_wave_len,
+                    generated_wave_chunks,
+                    previous_chunk,
+                    is_last_chunk,
+                    stream_output,
+                )
+                if stream_output and mp3_bytes is not None:
+                    yield mp3_bytes, full_audio
+                if should_break:
+                    break
+        else:
+            cond, _ = self.cfm_length_regulator(
+                source_content_indices, ylens=torch.LongTensor([source_mel_len]).to(device)
+            )
+            max_source_window = max_context_window - target_mel.size(2)
+            while processed_frames < cond.size(1):
+                chunk_cond = cond[:, processed_frames : processed_frames + max_source_window]
+                is_last_chunk = processed_frames + max_source_window >= cond.size(1)
+                cat_condition = torch.cat([prompt_condition, chunk_cond], dim=1)
+                original_len = cat_condition.size(1)
+                if self.dit_compiled:
+                    cat_condition = torch.nn.functional.pad(
+                        cat_condition,
+                        (0, 0, 0, self.compile_len - cat_condition.size(1)),
+                        value=0,
+                    )
+                with torch.autocast(device_type=device.type, dtype=torch.float32):
+                    vc_mel = self.cfm.inference(
+                        cat_condition,
+                        torch.LongTensor([original_len]).to(device),
+                        target_mel,
+                        target_style,
+                        diffusion_steps,
+                        inference_cfg_rate=[intelligebility_cfg_rate, similarity_cfg_rate],
+                        random_voice=anonymization_only,
+                    )
+                vc_mel = vc_mel[:, :, target_mel_len:original_len]
+                vc_wave = self.vocoder(vc_mel).squeeze()[None]
+
+                processed_frames, previous_chunk, should_break, mp3_bytes, full_audio = self._stream_wave_chunks(
+                    vc_wave,
+                    processed_frames,
+                    vc_mel,
+                    overlap_wave_len,
+                    generated_wave_chunks,
+                    previous_chunk,
+                    is_last_chunk,
+                    stream_output,
+                )
+                if stream_output and mp3_bytes is not None:
+                    yield mp3_bytes, full_audio
+                if should_break:
+                    break
+
+        if not stream_output:
+            return self.sr, np.concatenate(generated_wave_chunks) if len(generated_wave_chunks) > 0 else np.array([], dtype=np.float32)
+
+
+    @torch.no_grad()
+    @torch.inference_mode()
+    def convert_voice_arrays(
+        self,
+        source_wave: np.ndarray,
+        target_wave: np.ndarray,
+        source_sr: int,
+        target_sr: int,
+        diffusion_steps: int = 30,
+        length_adjust: float = 1.0,
+        intelligebility_cfg_rate: float = 0.7,
+        similarity_cfg_rate: float = 0.7,
+        top_p: float = 0.9,
+        temperature: float = 1.0,
+        repetition_penalty: float = 1.0,
+        convert_style: bool = False,
+        anonymization_only: bool = False,
+        device: torch.device = torch.device("cuda"),
+        dtype: torch.dtype = torch.float16,
+    ):
+        """
+        Non-streaming convenience wrapper for in-memory voice conversion.
+        Returns: (sample_rate, waveform_np)
+        """
+        return self.convert_voice_with_streaming_arrays(
+            source_wave=source_wave,
+            target_wave=target_wave,
+            source_sr=source_sr,
+            target_sr=target_sr,
+            diffusion_steps=diffusion_steps,
+            length_adjust=length_adjust,
+            intelligebility_cfg_rate=intelligebility_cfg_rate,
+            similarity_cfg_rate=similarity_cfg_rate,
+            top_p=top_p,
+            temperature=temperature,
+            repetition_penalty=repetition_penalty,
+            convert_style=convert_style,
+            anonymization_only=anonymization_only,
+            device=device,
+            dtype=dtype,
+            stream_output=False,
+        )

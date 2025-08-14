@@ -25,3 +25,4 @@ hydra-core==1.3.2
 flatten_dict
 julius
 importlib_resources
+tensorboard

@@ -28,3 +28,5 @@ flatten_dict
 julius
 importlib_resources
 tensorboard
+randomname
+tqdm

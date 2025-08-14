@@ -16,6 +16,13 @@ DEFAULT_CE_WIDE_CHECKPOINT = "bsq2048/bsq2048_light.pth"
 DEFAULT_SE_REPO_ID = "funasr/campplus"
 DEFAULT_SE_CHECKPOINT = "campplus_cn_common.bin"
 
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
 class VoiceConversionWrapper(torch.nn.Module):
     def __init__(
             self,
@@ -505,7 +512,7 @@ class VoiceConversionWrapper(torch.nn.Module):
             repetition_penalty: float = 1.5,
             convert_style: bool = False,
             anonymization_only: bool = False,
-            device: torch.device = torch.device("cuda"),
+            device: torch.device = device,
             dtype: torch.dtype = torch.float16,
             stream_output: bool = True,
     ):

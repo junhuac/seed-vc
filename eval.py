@@ -19,7 +19,7 @@ import torchaudio
 import librosa
 import torchaudio.compliance.kaldi as kaldi
 
-from hf_utils import load_custom_model_from_hf
+from .hf_utils import load_custom_model_from_hf
 from resemblyzer import preprocess_wav, VoiceEncoder
 
 # Load model and configuration

@@ -6,7 +6,7 @@ import torchaudio
 import librosa
 from .modules.commons import build_model, load_checkpoint, recursive_munch, str2bool
 import yaml
-from hf_utils import load_custom_model_from_hf
+from .hf_utils import load_custom_model_from_hf
 import numpy as np
 from pydub import AudioSegment
 import argparse

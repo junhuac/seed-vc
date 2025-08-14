@@ -3,7 +3,7 @@ import librosa
 import torchaudio
 import numpy as np
 from pydub import AudioSegment
-from hf_utils import load_custom_model_from_hf
+from .hf_utils import load_custom_model_from_hf
 
 DEFAULT_REPO_ID = "Plachta/Seed-VC"
 DEFAULT_CFM_CHECKPOINT = "v2/cfm_small.pth"

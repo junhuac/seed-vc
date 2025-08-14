@@ -5,7 +5,7 @@ import numpy as np
 from pydub import AudioSegment
 import yaml
 from .modules.commons import build_model, load_checkpoint, recursive_munch
-from hf_utils import load_custom_model_from_hf
+from .hf_utils import load_custom_model_from_hf
 from .modules.campplus.DTDNN import CAMPPlus
 from .modules.bigvgan import bigvgan
 from .modules.audio import mel_spectrogram

@@ -16,7 +16,7 @@ import shutil
 from .modules.commons import recursive_munch, build_model, load_checkpoint
 from optimizers import build_optimizer
 from data.ft_dataset import build_ft_dataloader
-from hf_utils import load_custom_model_from_hf
+from .hf_utils import load_custom_model_from_hf
 
 class Trainer:
     def __init__(self,

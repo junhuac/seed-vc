@@ -21,7 +21,7 @@ import torchaudio
 import librosa
 from .modules.commons import str2bool
 
-from hf_utils import load_custom_model_from_hf
+from .hf_utils import load_custom_model_from_hf
 
 
 # Load model and configuration

@@ -23,7 +23,7 @@ import librosa
 import torchaudio
 import torchaudio.compliance.kaldi as kaldi
 
-from hf_utils import load_custom_model_from_hf
+from .hf_utils import load_custom_model_from_hf
 
 import os
 import sys

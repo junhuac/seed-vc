@@ -4,7 +4,7 @@ import gradio as gr
 import torch
 import torchaudio
 import librosa
-from modules.commons import build_model, load_checkpoint, recursive_munch, str2bool
+from .modules.commons import build_model, load_checkpoint, recursive_munch, str2bool
 import yaml
 from hf_utils import load_custom_model_from_hf
 import numpy as np
@@ -50,7 +50,7 @@ def load_models(args):
     model.cfm.estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
 
     # Load additional modules
-    from modules.campplus.DTDNN import CAMPPlus
+    from .modules.campplus.DTDNN import CAMPPlus
 
     campplus_ckpt_path = load_custom_model_from_hf(
         "funasr/campplus", "campplus_cn_common.bin", config_filename=None
@@ -63,7 +63,7 @@ def load_models(args):
     vocoder_type = model_params.vocoder.type
 
     if vocoder_type == 'bigvgan':
-        from modules.bigvgan import bigvgan
+        from .modules.bigvgan import bigvgan
         bigvgan_name = model_params.vocoder.name
         bigvgan_model = bigvgan.BigVGAN.from_pretrained(bigvgan_name, use_cuda_kernel=False)
         # remove weight norm in the model and set to eval mode
@@ -71,8 +71,8 @@ def load_models(args):
         bigvgan_model = bigvgan_model.eval().to(device)
         vocoder_fn = bigvgan_model
     elif vocoder_type == 'hifigan':
-        from modules.hifigan.generator import HiFTGenerator
-        from modules.hifigan.f0_predictor import ConvRNNF0Predictor
+        from .modules.hifigan.generator import HiFTGenerator
+        from .modules.hifigan.f0_predictor import ConvRNNF0Predictor
         from ._paths import resolve_path
         hift_config = yaml.safe_load(open(resolve_path('configs/hifigan.yml'), 'r'))
         hift_gen = HiFTGenerator(**hift_config['hift'], f0_predictor=ConvRNNF0Predictor(**hift_config['f0_predictor']))
@@ -194,11 +194,11 @@ def load_models(args):
         "fmax": None if config['preprocess_params']['spect_params'].get('fmax', "None") == "None" else 8000,
         "center": False
     }
-    from modules.audio import mel_spectrogram
+    from .modules.audio import mel_spectrogram
 
     to_mel = lambda x: mel_spectrogram(x, **mel_fn_args)
     # f0 extractor
-    from modules.rmvpe import RMVPE
+    from .modules.rmvpe import RMVPE
 
     model_path = load_custom_model_from_hf("lj1995/VoiceConversionWebUI", "rmvpe.pt", None)
     rmvpe = RMVPE(model_path, is_half=False, device=device)

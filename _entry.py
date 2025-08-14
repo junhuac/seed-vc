@@ -5,7 +5,7 @@ import runpy
 
 def _ensure_local_imports():
     # Add the installed package directory (seed_vc) into sys.path so intra-package
-    # absolute imports like `from modules import ...` continue to work after install.
+    # absolute imports like `from .modules import ...` continue to work after install.
     pkg_dir = os.path.dirname(__file__)
     if pkg_dir not in sys.path:
         sys.path.insert(0, pkg_dir)

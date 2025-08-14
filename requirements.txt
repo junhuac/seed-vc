@@ -26,3 +26,4 @@ pyyaml
 python-dotenv
 flatten_dict
 julius
+importlib_resources

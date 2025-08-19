@@ -525,6 +525,7 @@ def inference_v1_streaming(
     config: Optional[str] = None,
     fp16: bool = True,
     yield_full_audio: bool = False,
+    stream_state: Optional[_V1StreamState] = None
 ):
     """
     Generator wrapper for V1 streaming, similar in spirit to V2's streaming API.
@@ -539,14 +540,15 @@ def inference_v1_streaming(
     - The last yielded item includes the crossfaded tail (set internally via end_of_stream).
     - Optionally writes the final full audio if `output` is provided and yield_full_audio=True.
     """
-    # Initialize streaming state
-    state = create_v1_stream_state(
-        target=target,
-        f0_condition=f0_condition,
-        checkpoint=checkpoint,
-        config=config,
-        fp16=fp16,
-    )
+    # Initialize stream state on first chunk
+    if stream_state is None:
+        stream_state = create_v1_stream_state(
+            target=target,
+            f0_condition=f0_condition,
+            checkpoint=checkpoint,
+            config=config,
+            fp16=fp16,
+        )
 
     prev = None
     # Iterate with lookahead to know when we're at the last chunk
@@ -571,7 +573,7 @@ def inference_v1_streaming(
             config=config,
             fp16=fp16,
             streaming=True,
-            stream_state=state,
+            stream_state=stream_state,
             end_of_stream=False,
         )
         full_chunks.append(chunk_audio)
@@ -595,7 +597,7 @@ def inference_v1_streaming(
         config=config,
         fp16=fp16,
         streaming=True,
-        stream_state=state,
+        stream_state=stream_state,
         end_of_stream=True,
     )
     full_chunks.append(last_audio)

@@ -55,7 +55,7 @@ class _V1StreamState:
         # Prepare target once (limit to 25s)
         target_wave = np.asarray(target.samples)
         if int(target.sample_rate) != self.sr:
-            target_wave = librosa.resample(target_wave, int(target.sample_rate), self.sr)
+            target_wave = librosa.resample(target_wave, orig_sr=int(target.sample_rate), target_sr=self.sr)
         target_wave_t = torch.tensor(target_wave, dtype=torch.float32, device=_device)[None, :]
         target_wave_t = target_wave_t[:, : self.sr * 25]
 
@@ -102,7 +102,7 @@ class _V1StreamState:
         # Prepare source chunk at model SR
         src_wave = np.asarray(source.samples)
         if int(source.sample_rate) != self.sr:
-            src_wave = librosa.resample(src_wave, int(source.sample_rate), self.sr)
+            src_wave = librosa.resample(src_wave, orig_sr=int(source.sample_rate), target_sr=self.sr)
         source_wave_t = torch.tensor(src_wave, dtype=torch.float32, device=_device)[None, :]
 
         # Content features (usually < 30s for a chunk)
@@ -249,7 +249,7 @@ def inference(
     # Prepare source/target audio at model SR
     def _to_tensor_at_sr(wave: np.ndarray, orig_sr: int, target_sr: int) -> torch.Tensor:
         if orig_sr != target_sr:
-            wave = librosa.resample(wave, orig_sr, target_sr)
+            wave = librosa.resample(wave, orig_sr=orig_sr, target_sr=target_sr)
         wave_t = torch.tensor(wave, dtype=torch.float32, device=_device)[None, :]
         return wave_t
 

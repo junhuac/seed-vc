@@ -12,7 +12,8 @@ import torchaudio
 import soundfile as sf
 import librosa
 
-from .Models.audio import AudioData
+from queue import Queue
+from pydub import AudioSegment
 from .inference import load_models as load_models_v1, adjust_f0_semitones, crossfade
 from .inference_v2 import load_v2_models
 
@@ -28,11 +29,20 @@ else:
 # Global cache for V1 models and a lightweight streaming state
 _v1_models_cache = None  # (model, semantic_fn, f0_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args)
 
+def get_audio_numpy(audio_segment: AudioSegment) -> np.ndarray:
+    samples = audio_segment.get_array_of_samples()
+    arr_int16 = np.array(samples).astype("int16")
+    arr_fltp = arr_int16.astype(np.float32)
+    # normalization. AudioSegment use int16, so the max value is  `1 << 8*2 - 1`
+    arr_fltp = arr_fltp / (1 << 8 * 2 - 1)
+    
+    return arr_fltp
+
 
 class _V1StreamState:
     """Holds precomputed target features and overlap buffer for streaming V1 inference."""
 
-    def __init__(self, args: SimpleNamespace, target: AudioData):
+    def __init__(self, args: SimpleNamespace, target: AudioSegment):
         global _v1_models_cache
         if _v1_models_cache is None:
             _v1_models_cache = load_models_v1(args)
@@ -53,9 +63,9 @@ class _V1StreamState:
         self.overlap_wave_len = self.overlap_frame_len * self.hop_length
 
         # Prepare target once (limit to 25s)
-        target_wave = np.asarray(target.samples)
-        if int(target.sample_rate) != self.sr:
-            target_wave = librosa.resample(target_wave, orig_sr=int(target.sample_rate), target_sr=self.sr)
+        target_wave = get_audio_numpy(target)
+        if int(target.frame_rate) != self.sr:
+            target_wave = librosa.resample(target_wave, orig_sr=int(target.frame_rate), target_sr=self.sr)
         target_wave_t = torch.tensor(target_wave, dtype=torch.float32, device=_device)[None, :]
         target_wave_t = target_wave_t[:, : self.sr * 25]
 
@@ -89,7 +99,7 @@ class _V1StreamState:
 
     def process_chunk(
         self,
-        source: AudioData,
+        source: AudioSegment,
         length_adjust: float,
         diffusion_steps: int,
         inference_cfg_rate: float,
@@ -100,9 +110,9 @@ class _V1StreamState:
         end_of_stream: bool = False,
     ) -> np.ndarray:
         # Prepare source chunk at model SR
-        src_wave = np.asarray(source.samples)
-        if int(source.sample_rate) != self.sr:
-            src_wave = librosa.resample(src_wave, orig_sr=int(source.sample_rate), target_sr=self.sr)
+        src_wave = get_audio_numpy(source)
+        if int(source.frame_rate) != self.sr:
+            src_wave = librosa.resample(src_wave, orig_sr=int(source.frame_rate), target_sr=self.sr)
         source_wave_t = torch.tensor(src_wave, dtype=torch.float32, device=_device)[None, :]
 
         # Content features (usually < 30s for a chunk)
@@ -189,8 +199,8 @@ class _V1StreamState:
 
 @torch.no_grad()
 def inference(
-    source: AudioData,
-    target: AudioData,
+    source: AudioSegment,
+    target: AudioSegment,
     output: Optional[str] = None,
     diffusion_steps: int = 30,
     length_adjust: float = 1.0,
@@ -254,8 +264,8 @@ def inference(
         return wave_t
 
     # Limit target to 25s like CLI (context len - safety)
-    source_wave_t = _to_tensor_at_sr(np.asarray(source.samples), int(source.sample_rate), sr)
-    target_wave_t = _to_tensor_at_sr(np.asarray(target.samples), int(target.sample_rate), sr)
+    source_wave_t = _to_tensor_at_sr(get_audio_numpy(source), int(source.frame_rate), sr)
+    target_wave_t = _to_tensor_at_sr(get_audio_numpy(target), int(target.frame_rate), sr)
     target_wave_t = target_wave_t[:, : sr * 25]
 
     # Resample to 16k for content (Whisper/xlsr)
@@ -388,8 +398,8 @@ def inference(
     # Optionally save
     if output:
         os.makedirs(output, exist_ok=True)
-        src_name = getattr(source.metadata, "name", "source") if getattr(source, "metadata", None) else "source"
-        tgt_name = getattr(target.metadata, "name", "target") if getattr(target, "metadata", None) else "target"
+        src_name = "source"
+        tgt_name = "target"
         out_path = os.path.join(
             output,
             f"vc_{src_name}_{tgt_name}_{length_adjust}_{diffusion_steps}_{inference_cfg_rate}.wav",
@@ -401,8 +411,8 @@ def inference(
 
 @torch.no_grad()
 def inference_v2(
-    source: AudioData,
-    target: AudioData,
+    source: AudioSegment,
+    target: AudioSegment,
     output: Optional[str] = None,
     diffusion_steps: int = 30,
     length_adjust: float = 1.0,
@@ -446,10 +456,10 @@ def inference_v2(
 
     # Call the in-memory V2 wrapper directly
     sr_v2, audio_np = _infv2.vc_wrapper_v2.convert_voice_with_streaming_arrays(
-        source_wave=np.asarray(source.samples),
-        target_wave=np.asarray(target.samples),
-        source_sr=int(source.sample_rate),
-        target_sr=int(target.sample_rate),
+        source_wave=get_audio_numpy(source),
+        target_wave=get_audio_numpy(target),
+        source_sr=int(source.frame_rate),
+        target_sr=int(target.frame_rate),
         diffusion_steps=diffusion_steps,
         length_adjust=length_adjust,
         intelligebility_cfg_rate=intelligibility_cfg_rate,
@@ -467,8 +477,8 @@ def inference_v2(
     # Optionally save
     if output:
         os.makedirs(output, exist_ok=True)
-        src_name = getattr(source.metadata, "name", "source") if getattr(source, "metadata", None) else "source"
-        tgt_name = getattr(target.metadata, "name", "target") if getattr(target, "metadata", None) else "target"
+        src_name = "source"
+        tgt_name = "target"
         out_path = os.path.join(
             output,
             f"vc_v2_{src_name}_{tgt_name}_{length_adjust}_{diffusion_steps}_{similarity_cfg_rate}.wav",
@@ -481,7 +491,7 @@ def inference_v2(
 # ---------------- Convenience helpers for V1 streaming ----------------
 
 def create_v1_stream_state(
-    target: AudioData,
+    target: AudioSegment,
     f0_condition: bool = False,
     checkpoint: Optional[str] = None,
     config: Optional[str] = None,
@@ -502,8 +512,8 @@ def create_v1_stream_state(
 
 
 def inference_v1_streaming(
-    source_chunks: "Iterable[AudioData]",
-    target: AudioData,
+    source_chunks: Queue[AudioSegment],
+    target: AudioSegment,
     output: Optional[str] = None,
     diffusion_steps: int = 30,
     length_adjust: float = 1.0,
@@ -525,7 +535,7 @@ def inference_v1_streaming(
 
     Notes:
     - `target` is used to precompute prompt/style once and reused for all chunks.
-    - `source_chunks` should yield AudioData chunks in order.
+    - `source_chunks` should yield AudioSegment chunks in order.
     - The last yielded item includes the crossfaded tail (set internally via end_of_stream).
     - Optionally writes the final full audio if `output` is provided and yield_full_audio=True.
     """
@@ -538,16 +548,16 @@ def inference_v1_streaming(
         fp16=fp16,
     )
 
+    prev = None
     # Iterate with lookahead to know when we're at the last chunk
-    it = iter(source_chunks)
-    try:
-        prev = next(it)
-    except StopIteration:
+    if source_chunks.empty():
         return  # empty iterator
 
     full_chunks = []
+    prev = source_chunks.get()
 
-    for cur in it:
+    while not source_chunks.empty():
+        cur = source_chunks.get()
         sr, chunk_audio = inference(
             source=prev,
             target=target,
@@ -596,8 +606,8 @@ def inference_v1_streaming(
         # Optionally save final output
         if output:
             os.makedirs(output, exist_ok=True)
-            src_name = getattr(prev.metadata, "name", "source") if getattr(prev, "metadata", None) else "source"
-            tgt_name = getattr(target.metadata, "name", "target") if getattr(target, "metadata", None) else "target"
+            src_name = "source"
+            tgt_name = "target"
             out_path = os.path.join(
                 output,
                 f"vc_v1_stream_{src_name}_{tgt_name}_{length_adjust}_{diffusion_steps}_{inference_cfg_rate}.wav",

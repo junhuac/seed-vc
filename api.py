@@ -16,6 +16,7 @@ from queue import Queue
 from pydub import AudioSegment
 from .inference import load_models as load_models_v1, adjust_f0_semitones, crossfade
 from .inference_v2 import load_v2_models
+from .inference_realtime import load_models as load_models_realtime
 
 
 # Reuse the same device policy as the inference scripts
@@ -45,7 +46,7 @@ class _V1StreamState:
     def __init__(self, args: SimpleNamespace, target: AudioSegment):
         global _v1_models_cache
         if _v1_models_cache is None:
-            _v1_models_cache = load_models_v1(args)
+            _v1_models_cache = load_models_realtime(args)
         (
             self.model,
             self.semantic_fn,
@@ -253,7 +254,7 @@ def inference(
         return sr, chunk_audio
 
     # ---- Original non-streaming path below ----
-    model, semantic_fn, f0_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args = load_models_v1(args)
+    model, semantic_fn, f0_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args = load_models_realtime(args)
     sr = int(mel_fn_args["sampling_rate"])  # 22050 or 44100 depending on f0_condition
 
     # Prepare source/target audio at model SR

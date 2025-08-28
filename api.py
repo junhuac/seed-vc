@@ -28,7 +28,7 @@ else:
     _device = torch.device("cpu")
 
 # Global cache for V1 models and a lightweight streaming state
-_v1_models_cache = None  # (model, semantic_fn, f0_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args)
+v1_models_cache = None  # (model, semantic_fn, f0_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args)
 
 def get_audio_numpy(audio_segment: AudioData) -> np.ndarray:
     samples = audio_segment.samples
@@ -43,10 +43,11 @@ def get_audio_numpy(audio_segment: AudioData) -> np.ndarray:
 class _V1StreamState:
     """Holds precomputed target features and overlap buffer for streaming V1 inference."""
 
-    def __init__(self, args: SimpleNamespace, target: AudioData):
-        global _v1_models_cache
-        if _v1_models_cache is None:
-            _v1_models_cache = load_models_realtime(args)
+    def __init__(self, args: SimpleNamespace, target: AudioData=None, new_target_name: str=None, realtime=True):
+        if realtime:
+            self.v1_models_cache = load_models_realtime(args)
+        else:
+            self.v1_models_cache = load_models_v1(args)
         (
             self.model,
             self.semantic_fn,
@@ -55,13 +56,22 @@ class _V1StreamState:
             self.campplus_model,
             self.mel_fn,
             self.mel_fn_args,
-        ) = _v1_models_cache
+        ) = self.v1_models_cache
 
         self.sr = int(self.mel_fn_args["sampling_rate"])  # 22050 or 44100
         self.hop_length = int(self.mel_fn_args["hop_size"])  # 256 or 512
         self.max_context_window = self.sr // self.hop_length * 30
         self.overlap_frame_len = 16
         self.overlap_wave_len = self.overlap_frame_len * self.hop_length
+
+        if target is not None:
+            self.prepare_target(args.f0_condition, target, new_target_name)
+
+        # Streaming overlap buffer and accumulator
+        self._previous_chunk = None  # torch.Tensor on device with shape [overlap_wave_len]
+
+    def prepare_target(self, f0_condition: bool, target: AudioData, new_target_name: str=None):
+        self.target_name = new_target_name
 
         # Prepare target once (limit to 25s)
         target_wave = get_audio_numpy(target)
@@ -84,7 +94,7 @@ class _V1StreamState:
         self.style2 = self.campplus_model(feat2.unsqueeze(0))
 
         # Optional F0 for target
-        if args.f0_condition:
+        if f0_condition:
             F0_ori = self.f0_fn(ori_waves_16k[0], thred=0.03)
             self.F0_ori = torch.from_numpy(F0_ori).to(_device)[None]
         else:
@@ -94,9 +104,6 @@ class _V1StreamState:
         self.prompt_condition, _, _, _, _ = self.model.length_regulator(
             self.S_ori, ylens=self.target2_lengths, n_quantizers=3, f0=self.F0_ori
         )
-
-        # Streaming overlap buffer and accumulator
-        self._previous_chunk = None  # torch.Tensor on device with shape [overlap_wave_len]
 
     def process_chunk(
         self,
@@ -202,6 +209,7 @@ class _V1StreamState:
 def inference(
     source: AudioData,
     target: AudioData,
+    new_target_name: Optional[str] = None,
     output: Optional[str] = None,
     diffusion_steps: int = 30,
     length_adjust: float = 1.0,
@@ -216,6 +224,7 @@ def inference(
     streaming: bool = False,
     stream_state: Optional[_V1StreamState] = None,
     end_of_stream: bool = False,
+    realtime: bool = True
 ) -> Tuple[int, np.ndarray]:
     """
     Run Seed-VC V1 inference.
@@ -238,7 +247,9 @@ def inference(
     if streaming:
         # Initialize stream state on first chunk
         if stream_state is None:
-            stream_state = _V1StreamState(args, target)
+            stream_state = _V1StreamState(args, target, new_target_name, realtime)
+        elif(new_target_name != stream_state.target_name):
+            stream_state.prepare_target(f0_condition, target, new_target_name)
         sr = stream_state.sr
         chunk_audio = stream_state.process_chunk(
             source=source,
@@ -493,10 +504,12 @@ def inference_v2(
 
 def create_v1_stream_state(
     target: AudioData,
+    new_target_name: Optional[str] = None,
     f0_condition: bool = False,
     checkpoint: Optional[str] = None,
     config: Optional[str] = None,
     fp16: bool = True,
+    realtime: bool = True
 ) -> _V1StreamState:
     """Create and return a reusable V1 streaming state.
 
@@ -509,12 +522,13 @@ def create_v1_stream_state(
         config=config,
         fp16=fp16,
     )
-    return _V1StreamState(args, target)
+    return _V1StreamState(args, target, new_target_name, realtime)
 
 
 def inference_v1_streaming(
     source_chunks: Queue[AudioData],
     target: AudioData,
+    new_target_name: Optional[str] = None,
     output: Optional[str] = None,
     diffusion_steps: int = 30,
     length_adjust: float = 1.0,
@@ -526,7 +540,8 @@ def inference_v1_streaming(
     config: Optional[str] = None,
     fp16: bool = True,
     yield_full_audio: bool = False,
-    stream_state: Optional[_V1StreamState] = None
+    stream_state: Optional[_V1StreamState] = None,
+    realtime: bool = True
 ):
     """
     Generator wrapper for V1 streaming, similar in spirit to V2's streaming API.
@@ -545,11 +560,15 @@ def inference_v1_streaming(
     if stream_state is None:
         stream_state = create_v1_stream_state(
             target=target,
+            new_target_name=new_target_name,
             f0_condition=f0_condition,
             checkpoint=checkpoint,
             config=config,
             fp16=fp16,
+            realtime=realtime
         )
+    elif(new_target_name != stream_state.target_name):
+        stream_state.prepare_target(f0_condition, target, new_target_name)
 
     prev = None
     # Iterate with lookahead to know when we're at the last chunk
@@ -564,6 +583,7 @@ def inference_v1_streaming(
         sr, chunk_audio = inference(
             source=prev,
             target=target,
+            new_target_name=new_target_name,
             diffusion_steps=diffusion_steps,
             length_adjust=length_adjust,
             inference_cfg_rate=inference_cfg_rate,
@@ -576,6 +596,7 @@ def inference_v1_streaming(
             streaming=True,
             stream_state=stream_state,
             end_of_stream=False,
+            realtime=realtime
         )
         full_chunks.append(chunk_audio)
         if yield_full_audio:
@@ -588,6 +609,7 @@ def inference_v1_streaming(
     sr, last_audio = inference(
         source=prev,
         target=target,
+        new_target_name=new_target_name,
         diffusion_steps=diffusion_steps,
         length_adjust=length_adjust,
         inference_cfg_rate=inference_cfg_rate,
@@ -600,6 +622,7 @@ def inference_v1_streaming(
         streaming=True,
         stream_state=stream_state,
         end_of_stream=True,
+        realtime=realtime
     )
     full_chunks.append(last_audio)
 

@@ -64,6 +64,7 @@ class _V1StreamState:
         self.overlap_frame_len = 16
         self.overlap_wave_len = self.overlap_frame_len * self.hop_length
 
+        self.target_name = new_target_name
         if target is not None:
             self.prepare_target(args.f0_condition, target, new_target_name)
 

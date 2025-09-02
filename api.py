@@ -226,7 +226,7 @@ def inference(
     stream_state: Optional[_V1StreamState] = None,
     end_of_stream: bool = False,
     realtime: bool = True
-) -> Tuple[int, np.ndarray]:
+) -> AudioData:
     """
     Run Seed-VC V1 inference.
 
@@ -263,7 +263,22 @@ def inference(
             fp16_flag=fp16,
             end_of_stream=end_of_stream,
         )
-        return sr, chunk_audio
+
+        if source.sample_rate != sr:
+            chunk_audio = librosa.resample(chunk_audio, orig_sr=sr, target_sr=source.sample_rate)
+
+        arr_fltp = chunk_audio * (1 << 8 * 2 - 1)
+        arr_int16 = arr_fltp.astype("int16")
+
+        output_audio = AudioData (
+            arr_int16,
+            source.mel_chunks,
+            source.duration,
+            source.samples_count,
+            source.sample_rate,
+            source.metadata,
+        )
+        return output_audio        
 
     # ---- Original non-streaming path below ----
     model, semantic_fn, f0_fn, vocoder_fn, campplus_model, mel_fn, mel_fn_args = load_models_realtime(args)
@@ -419,7 +434,21 @@ def inference(
         )
         sf.write(out_path, vc_wave_np, sr)
 
-    return sr, vc_wave_np
+    if source.sample_rate != sr:
+        vc_wave_np = librosa.resample(vc_wave_np, orig_sr=sr, target_sr=source.sample_rate)
+
+    arr_fltp = vc_wave_np * (1 << 8 * 2 - 1)
+    arr_int16 = arr_fltp.astype("int16")
+
+    output_audio = AudioData (
+        arr_int16,
+        source.mel_chunks,
+        source.duration,
+        source.samples_count,
+        source.sample_rate,
+        source.metadata,
+    )
+    return output_audio      
 
 
 @torch.no_grad()
@@ -581,7 +610,7 @@ def inference_v1_streaming(
 
     while not source_chunks.empty():
         cur = source_chunks.get()
-        sr, chunk_audio = inference(
+        chunk_audio = inference(
             source=prev,
             target=target,
             new_target_name=new_target_name,
@@ -599,15 +628,15 @@ def inference_v1_streaming(
             end_of_stream=False,
             realtime=realtime
         )
-        full_chunks.append(chunk_audio)
+        full_chunks.append(chunk_audio.samples)
         if yield_full_audio:
-            yield sr, chunk_audio, np.concatenate(full_chunks) if len(full_chunks) > 0 else np.array([], dtype=np.float32)
+            yield chunk_audio, np.concatenate(full_chunks) if len(full_chunks) > 0 else np.array([], dtype=np.float32)
         else:
-            yield sr, chunk_audio, None
+            yield chunk_audio, None
         prev = cur
 
     # Handle last chunk
-    sr, last_audio = inference(
+    last_audio = inference(
         source=prev,
         target=target,
         new_target_name=new_target_name,
@@ -625,7 +654,7 @@ def inference_v1_streaming(
         end_of_stream=True,
         realtime=realtime
     )
-    full_chunks.append(last_audio)
+    full_chunks.append(last_audio.samples)
 
     full_audio = np.concatenate(full_chunks) if len(full_chunks) > 0 else np.array([], dtype=np.float32)
 
@@ -639,8 +668,9 @@ def inference_v1_streaming(
                 output,
                 f"vc_v1_stream_{src_name}_{tgt_name}_{length_adjust}_{diffusion_steps}_{inference_cfg_rate}.wav",
             )
-            sf.write(out_path, full_audio, sr)
-        yield sr, last_audio, full_audio
+            sf.write(out_path, full_audio, last_audio.sample_rate)
+
+        yield last_audio, full_audio
     else:
-        yield sr, last_audio, None
+        yield last_audio, None
 
